@@ -1,0 +1,173 @@
+#!/sbin/sh
+
+#
+# INITIALIZATION
+#
+
+umask 022
+
+# GLOBAL VARS
+TMPDIR=/dev/tmp
+PERSISTDIR=/sbin/.magisk/mirror/persist
+
+rm -rf $TMPDIR 2>/dev/null
+mkdir -p $TMPDIR
+
+# ECHO BEFORE LOADING util_functions
+ui_print() { echo "$1"; }
+
+require_new_magisk() {
+  ui_print "*******************************"
+  ui_print " PLEASE INSTALL MAGISK V20.0+ ! "
+  ui_print "*******************************"
+  exit 1
+}
+
+is_legacy_script() {
+  unzip -l "$ZIPFILE" install.sh | grep -q install.sh
+  return $?
+}
+
+print_modname() {
+  local len
+  len=`echo -n $MODNAME | wc -c`
+  len=$((len + 2))
+  local pounds=`printf "%${len}s" | tr ' ' '*'`
+  ui_print "$pounds"
+  ui_print " $MODNAME "
+  ui_print "$pounds"
+  ui_print "*******************"
+  ui_print " POWERED BY MAGISK "
+  ui_print "*******************"
+}
+
+#
+# ENVIRONMENT
+#
+
+OUTFD=$2
+ZIPFILE=$3
+
+mount /data 2>/dev/null
+
+# LOAD UTILITY FUNCTIONS
+[ -f /data/adb/magisk/util_functions.sh ] || require_new_magisk
+. /data/adb/magisk/util_functions.sh
+[ $MAGISK_VER_CODE -gt 18100 ] || require_new_magisk
+
+# PREPERATION FOR FLASHABLE ZIPS
+setup_flashable
+
+# MOUNT PARTITIONS
+mount_partitions
+
+# DETECT VERSION AND ARCHITECTURE
+api_level_arch_detect
+
+# SETUP BUSYBOX AND BINARIES
+$BOOTMODE && boot_actions || recovery_actions
+
+#
+# PREPARATION
+#
+
+# EXTRACT PROP FILE
+unzip -o "$ZIPFILE" module.prop -d $TMPDIR >&2
+[ ! -f $TMPDIR/module.prop ] && abort "! Unable to extract zip file!"
+
+$BOOTMODE && MODDIRNAME=modules_update || MODDIRNAME=modules
+MODULEROOT=$NVBASE/$MODDIRNAME
+MODID=`grep_prop id $TMPDIR/module.prop`
+MODPATH=$MODULEROOT/$MODID
+MODNAME=`grep_prop name $TMPDIR/module.prop`
+
+# CREATE MODULE PATHS
+rm -rf $MODPATH 2>/dev/null
+mkdir -p $MODPATH
+
+#
+# INSTALL
+#
+
+if is_legacy_script; then
+  unzip -oj "$ZIPFILE" module.prop install.sh uninstall.sh 'common/*' -d $TMPDIR >&2
+
+  # LOAD INSTALL SCRIPT
+  . $TMPDIR/install.sh
+
+  # CALLBACKS
+  print_modname
+  on_install
+
+  # CUSTOM UNINSTALLER
+  [ -f $TMPDIR/uninstall.sh ] && cp -af $TMPDIR/uninstall.sh $MODPATH/uninstall.sh
+
+  # SKIP MOUNT
+  $SKIPMOUNT && touch $MODPATH/skip_mount
+
+  # PROP FILE
+  $PROPFILE && cp -af $TMPDIR/system.prop $MODPATH/system.prop
+
+  # MODULE INFO
+  cp -af $TMPDIR/module.prop $MODPATH/module.prop
+
+  # POST-FS-DATA SCRIPTS
+  $POSTFSDATA && cp -af $TMPDIR/post-fs-data.sh $MODPATH/post-fs-data.sh
+
+  # SERVICE SCRIPTS
+  $LATESTARTSERVICE && cp -af $TMPDIR/service.sh $MODPATH/service.sh
+
+  ui_print "- SETTING PERMISSIONS"
+  set_permissions
+else
+  print_modname
+
+  unzip -o "$ZIPFILE" customize.sh -d $MODPATH >&2
+
+  if ! grep -q '^SKIPUNZIP=1$' $MODPATH/customize.sh 2>/dev/null; then
+    ui_print "- EXTRACTING MODULE FILES"
+    unzip -o "$ZIPFILE" -x 'META-INF/*' -d $MODPATH >&2
+
+    # DEFAULT PERMISSIONS
+    set_perm_recursive $MODPATH 0 0 0755 0644
+  fi
+
+  # LOAD CUSTOMIZATION SCRIPT
+  [ -f $MODPATH/customize.sh ] && . $MODPATH/customize.sh
+fi
+
+# HANDLE REPLACE FOLDERS
+for TARGET in $REPLACE; do
+  ui_print "- REPLACE TARGET: $TARGET"
+  mktouch $MODPATH$TARGET/.replace
+done
+
+if $BOOTMODE; then
+  # UPDATE INFO FOR MAGISK MANAGER
+  mktouch $NVBASE/modules/$MODID/update
+  cp -af $MODPATH/module.prop $NVBASE/modules/$MODID/module.prop
+fi
+
+# COPY OVER CUSTOM SEPOLICY RULES
+if [ -f $MODPATH/sepolicy.rule -a -e $PERSISTDIR ]; then
+  ui_print "- INSTALLING CUSTOM SEPOLICY PATCH"
+  PERSISTMOD=$PERSISTDIR/magisk/$MODID
+  mkdir -p $PERSISTMOD
+  cp -af $MODPATH/sepolicy.rule $PERSISTMOD/sepolicy.rule
+fi
+
+# REMOVE STUFFS THAT DON'T BELONG TO MODULES
+rm -rf \
+$MODPATH/system/placeholder $MODPATH/customize.sh \
+$MODPATH/README.md $MODPATH/.git* 2>/dev/null
+
+#
+# FINALIZING
+#
+
+cd /
+$BOOTMODE || recovery_cleanup
+rm -rf $TMPDIR
+
+ui_print "- DONE. ENJOY !"
+exit 0
