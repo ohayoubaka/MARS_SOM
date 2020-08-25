@@ -21,7 +21,6 @@ REPLACE="
 /system/product/app/Calendar
 /system/product/app/DeskClock
 /system/product/priv-app/Contacts
-/system/product/priv-app/Launcher3QuickStep
 "
 
 
