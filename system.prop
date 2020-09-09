@@ -4,6 +4,7 @@ ro.boot.vendor.overlay.theme=com.android.internal.systemui.navbar.gestural
 ro.com.android.prov_mobiledata=true
 ro.com.android.wifi-watchlist=GoogleGuest
 ro.com.google.apphider=ON
+ro.com.google.clientidbase=android-google
 ro.com.google.ime.bs_theme=true
 ro.com.google.ime.height_ratio=1.0
 ro.com.google.ime.kb_pad_port_b=20
